@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Patchwork — the patient friend who knows computers</title>
+  <meta name="description" content="Free, open-source tech help for non-technical people. Answers come from real, cited sources, at the level of detail you choose. No account, no tracking." />
+  <meta property="og:title" content="Patchwork" />
+  <meta property="og:description" content="The patient friend who knows computers, and admits when they don't. Free, open-source, cited tech help." />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='6' y='6' width='42' height='42' rx='6' fill='%23b4552d'/><rect x='52' y='6' width='42' height='42' rx='6' fill='%23d9a441'/><rect x='6' y='52' width='42' height='42' rx='6' fill='%233e7c6f'/><rect x='52' y='52' width='42' height='42' rx='6' fill='%235a6e9e'/></svg>" />
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div class="brand">
+        <div class="quilt" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <span class="brand-name">Patchwork</span>
+      </div>
+      <button id="langToggle" class="lang" aria-label="Schimbă limba / Switch language">RO</button>
+    </header>
+
+    <section class="hero">
+      <h1 data-i18n="heroTitle">What's broken?</h1>
+      <p class="tagline" data-i18n="tagline">The patient friend who knows computers, and admits when they don't.</p>
+    </section>
+
+    <section class="ask card stitched">
+      <label for="question" class="sr-only" data-i18n="questionLabel">Describe your problem</label>
+      <textarea id="question" rows="4" maxlength="2000"
+        data-i18n-placeholder="placeholder"
+        placeholder="Describe what's happening, in your own words. Example: my laptop says 'no bootable device' when I turn it on."></textarea>
+
+      <div class="examples" id="examples" aria-label="Examples"></div>
+
+      <div class="controls">
+        <div class="dial" role="radiogroup" aria-label="Level of detail">
+          <span class="dial-label" data-i18n="dialLabel">Explain it:</span>
+          <button class="dial-btn" data-level="simple" data-i18n="simple">Simply</button>
+          <button class="dial-btn active" data-level="standard" data-i18n="standard">Normally</button>
+          <button class="dial-btn" data-level="expert" data-i18n="expert">Technically</button>
+        </div>
+        <button id="askBtn" class="primary" data-i18n="ask">Help me</button>
+      </div>
+    </section>
+
+    <section id="answerCard" class="card answer hidden" aria-live="polite">
+      <div id="stopBanner" class="stop hidden"></div>
+      <div id="answer"></div>
+      <div id="sourcesBox" class="sources hidden">
+        <h2 data-i18n="sourcesTitle">Sources</h2>
+        <ol id="sourcesList"></ol>
+      </div>
+      <p id="verifyNote" class="verify hidden" data-i18n="verifyNote">Patchwork only states what it can cite. Check the sources if something looks off.</p>
+    </section>
+
+    <section id="errorCard" class="card error hidden"></section>
+
+    <section class="promises">
+      <div class="promise"><strong data-i18n="p1t">Cited, always.</strong> <span data-i18n="p1">Every claim links to a real, public source you can open.</span></div>
+      <div class="promise"><strong data-i18n="p2t">Private by design.</strong> <span data-i18n="p2">No account, no tracking, your question is not stored.</span></div>
+      <div class="promise"><strong data-i18n="p3t">Honest.</strong> <span data-i18n="p3">When it doesn't know, it says so instead of guessing.</span></div>
+    </section>
+
+    <footer>
+      <p data-i18n="privacy">No account. No tracking. Your question is processed to answer it and is not stored.</p>
+      <p>
+        <a href="https://github.com/PLACEHOLDER/patchwork" rel="noopener">GitHub</a>
+        · AGPL-3.0
+        · <span data-i18n="freeForever">Free, forever.</span>
+        · <span data-i18n="braveNote">Web search powered by</span> <a href="https://brave.com/search/api/" rel="noopener">Brave Search</a>
+      </p>
+    </footer>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

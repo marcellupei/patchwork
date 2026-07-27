@@ -1,0 +1,16 @@
+{
+  "name": "patchwork",
+  "version": "0.1.0",
+  "description": "The patient friend who knows computers, and admits when they don't. Free, open-source, multilingual AI tech assistant for non-technical users.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "scripts": {
+    "dev": "netlify dev",
+    "check": "node --check netlify/functions/ask.mjs && node --check public/app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PLACEHOLDER/patchwork"
+  }
+}
