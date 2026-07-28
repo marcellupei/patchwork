@@ -38,12 +38,13 @@
       <div class="controls">
         <div class="dial" role="radiogroup" aria-label="Level of detail">
           <span class="dial-label" data-i18n="dialLabel">Explain it:</span>
-          <button class="dial-btn" data-level="simple" data-i18n="simple">Simply</button>
-          <button class="dial-btn active" data-level="standard" data-i18n="standard">Normally</button>
-          <button class="dial-btn" data-level="expert" data-i18n="expert">Technically</button>
+          <button class="dial-btn" role="radio" aria-checked="false" data-level="simple" data-i18n="simple">Simply</button>
+          <button class="dial-btn active" role="radio" aria-checked="true" data-level="standard" data-i18n="standard">Normally</button>
+          <button class="dial-btn" role="radio" aria-checked="false" data-level="expert" data-i18n="expert">Technically</button>
         </div>
         <button id="askBtn" class="primary" data-i18n="ask">Help me</button>
       </div>
+      <p class="hint" data-i18n="hintSubmit">Ctrl+Enter sends</p>
     </section>
 
     <section id="answerCard" class="card answer hidden" aria-live="polite">
@@ -67,7 +68,7 @@
     <footer>
       <p data-i18n="privacy">No account. No tracking. Your question is processed to answer it and is not stored.</p>
       <p>
-        <a href="https://github.com/PLACEHOLDER/patchwork" rel="noopener">GitHub</a>
+        <a href="https://github.com/marcellupei/patchwork" rel="noopener">GitHub</a>
         · AGPL-3.0
         · <span data-i18n="freeForever">Free, forever.</span>
         · <span data-i18n="braveNote">Web search powered by</span> <a href="https://brave.com/search/api/" rel="noopener">Brave Search</a>

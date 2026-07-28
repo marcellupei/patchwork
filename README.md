@@ -6,6 +6,8 @@ Patchwork is a free, open-source, multilingual tech assistant for non-technical 
 
 No account. No tracking. No stored questions. Free, forever.
 
+**Project docs:** [Mission](MISSION.md) · [Positioning & Principles](POSITIONING.md) · [Architecture](ARCHITECTURE.md) · [System Prompts](SYSTEM_PROMPT.md) · [Feature Tracker](FEATURE_TRACKER.md) · [Roadmap](ROADMAP.md) · [Presence & Discoverability](PRESENCE.md) · [Budget](BUDGET.md)
+
 ## Principles (short version)
 
 1. **Cite or don't state.** Every factual claim is backed by a visible, real source. No invented links, ever.
@@ -13,13 +15,13 @@ No account. No tracking. No stored questions. Free, forever.
 3. **You control the level.** A complexity dial: simply / normally / technically.
 4. **Stop-here triggers.** For bricked devices, banking/scam situations, panic, or personal crisis, Patchwork stops troubleshooting and points to the right human help.
 5. **Privacy is the architecture.** No persistent identity, no logs of question content, no answer database. Everything is retrieved live and discarded.
-6. **Any language.** Ask in your language, get the answer in your language.
+6. **Your language.** Answers follow the language you ask in. The interface and the hand-written safety messages are English and Romanian today; more human-reviewed languages are on the [roadmap](ROADMAP.md).
 
 ## How it works
 
 ```
 question ──► triage (fast model: safety + routing + search plan)
-        ──► live web search (Brave Search API)
+        ──► live web search (provider chain: Brave / Serper / SearXNG)
         ──► fetch top sources, extract text
         ──► answer (routed model, streamed, citations required)
 ```
@@ -29,10 +31,17 @@ The stack is deliberately boring: a static HTML/CSS/JS page and one serverless f
 ## Run your own
 
 1. Fork/clone this repo and connect it to [Netlify](https://www.netlify.com) (free tier is fine), or run locally with `npx netlify dev`.
-2. Set two environment variables:
-   - `ANTHROPIC_API_KEY` — from [console.anthropic.com](https://console.anthropic.com)
-   - one search key: `SERPER_API_KEY` ([serper.dev](https://serper.dev), free tier ~2,500 queries/month) or `BRAVE_SEARCH_API_KEY` ([brave.com/search/api](https://brave.com/search/api/), paid, Brave's own index). If both are set, Brave is used.
+2. Set `ANTHROPIC_API_KEY` (from [console.anthropic.com](https://console.anthropic.com)) and at least one search provider:
+   - `BRAVE_SEARCH_API_KEY` — [brave.com/search/api](https://brave.com/search/api/), paid, Brave's own index. Most reliable; used by the official instance.
+   - `SERPER_API_KEY` — [serper.dev](https://serper.dev), free starter credits (~2,500 queries).
+   - `SEARXNG_URL` — base URL of your own [SearXNG](https://docs.searxng.org) instance (free, open source, self-hosted). The instance must have JSON output enabled (`search.formats` includes `json` in `settings.yml`).
+
+   **Set several and they form a fallback chain.** If a provider is down or returns nothing, the next one covers it, so an unreliable provider (a self-hosted SearXNG that gets rate-limited, say) can never take the tool down. Default priority is `brave > serper > searxng`; override with `PW_SEARCH_ORDER` (e.g. `searxng,brave` to run fully free with a commercial safety net).
 3. Optional: `PW_MODEL_FAST` and `PW_MODEL_MAIN` to override the default models.
+
+### Run it fully free and open
+
+Set `SEARXNG_URL` to your own instance and Patchwork needs no paid search key at all. For reliability, pair it with a commercial key and `PW_SEARCH_ORDER=searxng,brave`: SearXNG serves every query it can, and the moment it can't, Patchwork falls back without the user noticing. If your instance doesn't use Brave, also edit the "Web search powered by Brave Search" attribution in `public/index.html` to match your provider.
 
 That's the whole deployment.
 

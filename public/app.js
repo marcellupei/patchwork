@@ -24,12 +24,16 @@ const I18N = {
     expert: "Technically",
     ask: "Help me",
     working: "Looking it up…",
+    stSearching: "Searching for sources…",
+    stReading: "Reading the pages…",
+    stWriting: "Writing the answer…",
+    hintSubmit: "Ctrl+Enter sends",
     sourcesTitle: "Sources",
     verifyNote: "Patchwork only states what it can cite. Check the sources if something looks off.",
     privacy: "No account. No tracking. Your question is processed to answer it and is not stored.",
     freeForever: "Free, forever.",
     errNetwork: "Couldn't reach the server. Check your connection and try again.",
-    errConfig: "This Patchwork instance isn't fully set up yet (missing API keys). If you run it, add ANTHROPIC_API_KEY and a search key (SERPER_API_KEY or BRAVE_SEARCH_API_KEY).",
+    errConfig: "This Patchwork instance isn't fully set up yet (missing API keys). If you run it, add ANTHROPIC_API_KEY and a search provider (BRAVE_SEARCH_API_KEY, SERPER_API_KEY, or a self-hosted SEARXNG_URL).",
     errGeneric: "Something went wrong on our side. Try again in a minute.",
     errShort: "Tell me a little more about the problem first.",
   },
@@ -56,12 +60,16 @@ const I18N = {
     expert: "Tehnic",
     ask: "Ajută-mă",
     working: "Caut…",
+    stSearching: "Caut surse…",
+    stReading: "Citesc paginile…",
+    stWriting: "Scriu răspunsul…",
+    hintSubmit: "Ctrl+Enter trimite",
     sourcesTitle: "Surse",
     verifyNote: "Patchwork afirmă doar ce poate cita. Verifică sursele dacă ceva nu pare în regulă.",
     privacy: "Fără cont. Fără tracking. Întrebarea ta e procesată doar ca să primești răspunsul și nu e stocată.",
     freeForever: "Gratuit, pentru totdeauna.",
     errNetwork: "Nu am putut contacta serverul. Verifică conexiunea și încearcă din nou.",
-    errConfig: "Această instanță Patchwork nu e configurată complet încă (lipsesc cheile API). Dacă o administrezi, adaugă ANTHROPIC_API_KEY și o cheie de căutare (SERPER_API_KEY sau BRAVE_SEARCH_API_KEY).",
+    errConfig: "Această instanță Patchwork nu e configurată complet încă (lipsesc cheile API). Dacă o administrezi, adaugă ANTHROPIC_API_KEY și un provider de căutare (BRAVE_SEARCH_API_KEY, SERPER_API_KEY sau un SEARXNG_URL self-hosted).",
     errGeneric: "Ceva n-a mers la noi. Încearcă din nou într-un minut.",
     errShort: "Spune-mi întâi puțin mai mult despre problemă.",
   },
@@ -108,12 +116,15 @@ function showError(msg) {
 }
 
 function renderAnswer(el, raw, sources) {
-  // Minimal safe rendering: escape everything, then re-add inline code and citation links.
+  // Minimal safe rendering: escape everything, then re-add code, bold and citation links.
   let safe = raw
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
   safe = safe.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  safe = safe.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  safe = safe.replace(/^### (.+)$/gm, "<strong>$1</strong>");
+  safe = safe.replace(/^## (.+)$/gm, "<strong>$1</strong>");
   safe = safe.replace(/\[(\d{1,2})\]/g, (m, n) => {
     const src = sources.find((s) => s.n === Number(n));
     return src
@@ -176,28 +187,47 @@ async function ask() {
       return;
     }
 
-    // Streamed: first line is JSON {sources:[...]}, rest is answer text.
+    // Streamed protocol: "#stage" progress lines, then one JSON line
+    // ({sources:[...]} or {error:...}), then the answer text.
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let sources = [];
     let headerParsed = false;
+    let gotError = false;
     let text = "";
+
+    answerEl.textContent = t("stSearching");
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      if (!headerParsed) {
+      while (!headerParsed) {
         const nl = buffer.indexOf("\n");
-        if (nl === -1) continue;
+        if (nl === -1) break;
+        const line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
+
+        if (line.startsWith("#")) {
+          const stage = line.slice(1).trim();
+          const label = { searching: "stSearching", reading: "stReading", writing: "stWriting" }[stage];
+          if (label) answerEl.textContent = t(label);
+          continue;
+        }
+
         try {
-          const header = JSON.parse(buffer.slice(0, nl));
+          const header = JSON.parse(line);
+          if (header.error) {
+            gotError = true;
+            showError(header.error === "not_configured" ? t("errConfig") : t("errGeneric"));
+            answerCard.classList.add("hidden");
+          }
           sources = header.sources ?? [];
         } catch { /* tolerate malformed header */ }
-        buffer = buffer.slice(nl + 1);
         headerParsed = true;
+        answerEl.textContent = "";
         if (sources.length) {
           sourcesList.innerHTML = sources
             .map(
@@ -211,12 +241,14 @@ async function ask() {
         }
       }
 
-      if (headerParsed && buffer) {
+      if (headerParsed && !gotError && buffer) {
         text += buffer;
         buffer = "";
         renderAnswer(answerEl, text, sources);
       }
     }
+
+    if (gotError) return;
 
     if (!text.trim()) showError(t("errGeneric"));
     else $("verifyNote").classList.remove("hidden");
@@ -237,8 +269,12 @@ $("langToggle").addEventListener("click", () => {
 
 document.querySelectorAll(".dial-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".dial-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".dial-btn").forEach((b) => {
+      b.classList.remove("active");
+      b.setAttribute("aria-checked", "false");
+    });
     btn.classList.add("active");
+    btn.setAttribute("aria-checked", "true");
     level = btn.dataset.level;
   });
 });

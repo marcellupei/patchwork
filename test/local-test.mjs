@@ -11,6 +11,8 @@ const ok = (name) => { passed++; console.log("  ✓", name); };
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.BRAVE_SEARCH_API_KEY;
 delete process.env.SERPER_API_KEY;
+delete process.env.SEARXNG_URL;
+delete process.env.PW_SEARCH_ORDER;
 const { default: handler } = await import("../netlify/functions/ask.mjs");
 
 let res = await handler(new Request("http://x/api/ask", {
@@ -66,6 +68,16 @@ globalThis.fetch = async (url, opts) => {
       ]},
     }), { status: 200, headers: { "content-type": "application/json" } });
   }
+  if (u.includes("searxng.local")) {
+    return new Response(JSON.stringify({
+      results: [
+        { title: "SearXNG router doc", url: "https://example.com/searx-router", content: "Router reset via SearXNG" },
+      ],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  if (u.includes("searxng.dead")) {
+    return new Response("gateway blocked", { status: 429 });
+  }
   // page fetches
   return new Response("<html><body><p>Reset instructions here.</p></body></html>", {
     status: 200, headers: { "content-type": "text/html" },
@@ -79,13 +91,24 @@ res = await handler(new Request("http://x/api/ask", {
 }));
 assert.equal(res.status, 200);
 const text = await res.text();
-const nl = text.indexOf("\n");
-const header = JSON.parse(text.slice(0, nl));
+const lines = text.split("\n");
+const stages = [];
+let headerLine = null;
+let bodyStart = 0;
+for (let i = 0; i < lines.length; i++) {
+  if (lines[i].startsWith("#")) { stages.push(lines[i].slice(1)); continue; }
+  headerLine = lines[i];
+  bodyStart = i + 1;
+  break;
+}
+assert.deepEqual(stages, ["searching", "reading", "writing"]);
+const header = JSON.parse(headerLine);
 assert.equal(header.sources.length, 2);
 assert.equal(header.sources[0].n, 1);
-assert.match(text.slice(nl + 1), /router likely lost its DNS/i);
-assert.match(text.slice(nl + 1), /\[1\]/);
-ok("streamed answer: JSON header + text body + citation");
+const body = lines.slice(bodyStart).join("\n");
+assert.match(body, /router likely lost its DNS/i);
+assert.match(body, /\[1\]/);
+ok("streamed answer: progress stages + JSON header + text body + citation");
 
 // --- 4. Stop-here trigger --------------------------------------------------
 triageResponse = JSON.stringify({
@@ -115,6 +138,42 @@ assert.equal(res.status, 400);
 res = await handler(new Request("http://x/api/ask", { method: "POST", body: JSON.stringify({ question: "x".repeat(3000) }) }));
 assert.equal(res.status, 400);
 ok("length guards -> 400");
+
+// --- 7. SearXNG as sole provider works -------------------------------------
+triageResponse = JSON.stringify({
+  content: [{ type: "text", text: '{"stop":"none","model":"fast","queries":["router reset"],"lang":"en"}' }],
+});
+delete process.env.SERPER_API_KEY;
+process.env.SEARXNG_URL = "https://searxng.local";
+res = await handler(new Request("http://x/api/ask", {
+  method: "POST",
+  body: JSON.stringify({ question: "router not working", level: "standard" }),
+}));
+{
+  const t = await res.text();
+  const hdr = JSON.parse(t.split("\n").find((l) => l.startsWith("{")));
+  assert.equal(hdr.sources[0].url, "https://example.com/searx-router");
+}
+ok("searxng as sole provider returns results");
+
+// --- 8. Dead SearXNG falls back to a commercial provider -------------------
+process.env.SERPER_API_KEY = "test-key";
+process.env.SEARXNG_URL = "https://searxng.dead";     // returns 429
+process.env.PW_SEARCH_ORDER = "searxng,serper";       // searxng tried first, then serper
+res = await handler(new Request("http://x/api/ask", {
+  method: "POST",
+  body: JSON.stringify({ question: "router not working", level: "standard" }),
+}));
+{
+  const t = await res.text();
+  const hdr = JSON.parse(t.split("\n").find((l) => l.startsWith("{")));
+  // serper mock returns example.com/router; proves the chain fell through the dead SearXNG
+  assert.ok(hdr.sources.some((s) => s.url === "https://example.com/router"));
+}
+ok("dead searxng -> silent fallback to serper, tool stays up");
+
+delete process.env.SEARXNG_URL;
+delete process.env.PW_SEARCH_ORDER;
 
 globalThis.fetch = realFetch;
 console.log(`\nAll ${passed} tests passed.`);

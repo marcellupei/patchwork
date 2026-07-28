@@ -4,9 +4,15 @@
 //
 // Env vars (set in Netlify UI -> Site settings -> Environment variables):
 //   ANTHROPIC_API_KEY      required
-//   SERPER_API_KEY         search provider option A (free tier: https://serper.dev)
-//   BRAVE_SEARCH_API_KEY   search provider option B (paid: https://brave.com/search/api/)
-//     (set at least one; if both are set, Brave wins)
+//   BRAVE_SEARCH_API_KEY   search provider (paid: https://brave.com/search/api/)
+//   SERPER_API_KEY         search provider (free tier: https://serper.dev)
+//   SEARXNG_URL            search provider: base URL of a self-hosted SearXNG
+//                          instance with JSON output enabled (free, open source)
+//     Set at least one. Set several and they form a fallback chain, so an
+//     unreliable provider never takes the tool down. Default priority:
+//     brave > serper > searxng. Override with PW_SEARCH_ORDER.
+//   PW_SEARCH_ORDER        optional, e.g. "searxng,brave" to make SearXNG primary
+//                          with Brave as the safety net.
 //   PW_MODEL_FAST          optional, default "claude-haiku-4-5"
 //   PW_MODEL_MAIN          optional, default "claude-sonnet-4-5"
 
@@ -164,14 +170,76 @@ async function serperSearch(apiKey, query) {
   }));
 }
 
-function searchProvider() {
+async function searxngSearch(baseUrl, query) {
+  // Self-hosted SearXNG instance. The instance must have JSON output enabled
+  // (settings.yml -> search.formats includes "json"). Timed out so a slow or
+  // dead instance can never stall the request; on any failure returns [] so the
+  // fallback chain moves on.
+  const url = `${baseUrl.replace(/\/+$/, "")}/search?q=${encodeURIComponent(query)}&format=json&safesearch=1&language=en`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "PatchworkBot/0.1 (+https://github.com/marcellupei/patchwork)",
+      },
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => null);
+    return (data?.results ?? []).slice(0, 5).map((r) => ({
+      title: r.title ?? r.url,
+      url: r.url,
+      snippet: r.content ?? "",
+    }));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Build the ordered list of configured search providers. More than one can be
+// set: they form a fallback chain, so an unreliable provider (a self-hosted
+// SearXNG that gets rate-limited, say) can never take the whole tool down as
+// long as one more provider is configured. Default order puts the reliable
+// commercial APIs first; override with PW_SEARCH_ORDER (comma-separated names)
+// to make SearXNG primary with a commercial safety net.
+function buildProviders() {
+  const providers = [];
   if (process.env.BRAVE_SEARCH_API_KEY) {
-    return (q) => braveSearch(process.env.BRAVE_SEARCH_API_KEY, q);
+    providers.push({ name: "brave", fn: (q) => braveSearch(process.env.BRAVE_SEARCH_API_KEY, q) });
   }
   if (process.env.SERPER_API_KEY) {
-    return (q) => serperSearch(process.env.SERPER_API_KEY, q);
+    providers.push({ name: "serper", fn: (q) => serperSearch(process.env.SERPER_API_KEY, q) });
   }
-  return null;
+  if (process.env.SEARXNG_URL) {
+    providers.push({ name: "searxng", fn: (q) => searxngSearch(process.env.SEARXNG_URL, q) });
+  }
+  const order = (process.env.PW_SEARCH_ORDER || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (order.length) {
+    providers.sort((a, b) => {
+      const i = order.indexOf(a.name);
+      const j = order.indexOf(b.name);
+      return (i < 0 ? 99 : i) - (j < 0 ? 99 : j);
+    });
+  }
+  return providers;
+}
+
+// Run one query through the provider chain, returning the first non-empty
+// result set. A provider that throws or returns nothing is skipped silently.
+async function searchWithFallback(providers, query) {
+  for (const p of providers) {
+    try {
+      const results = await p.fn(query);
+      if (results && results.length) return results;
+    } catch {
+      /* provider down, try the next */
+    }
+  }
+  return [];
 }
 
 function stripHtml(html) {
@@ -194,7 +262,7 @@ async function fetchPageText(url) {
   try {
     const res = await fetch(url, {
       signal: ctrl.signal,
-      headers: { "User-Agent": "PatchworkBot/0.1 (+https://github.com/PLACEHOLDER/patchwork; open-source tech help)" },
+      headers: { "User-Agent": "PatchworkBot/0.1 (+https://github.com/marcellupei/patchwork; open-source tech help)" },
     });
     const type = res.headers.get("content-type") ?? "";
     if (!res.ok || !type.includes("html")) return "";
@@ -215,8 +283,8 @@ export default async (req) => {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const search = searchProvider();
-  if (!anthropicKey || !search) return json({ error: "not_configured" }, 503);
+  const providers = buildProviders();
+  if (!anthropicKey || providers.length === 0) return json({ error: "not_configured" }, 503);
 
   const modelFast = process.env.PW_MODEL_FAST || "claude-haiku-4-5";
   const modelMain = process.env.PW_MODEL_MAIN || "claude-sonnet-4-5";
@@ -242,66 +310,68 @@ export default async (req) => {
     return json({ stop: plan.stop, message: plan.lang === "ro" ? msg.ro : msg.en });
   }
 
-  // 3. Live retrieval. No cached answer database, ever.
-  const resultLists = await Promise.all(plan.queries.map((q) => search(q)));
-  const seen = new Set();
-  const sources = [];
-  for (const r of resultLists.flat()) {
-    if (!r.url || seen.has(r.url)) continue;
-    seen.add(r.url);
-    sources.push(r);
-    if (sources.length >= MAX_SOURCES) break;
-  }
-
-  const pageTexts = await Promise.all(
-    sources.slice(0, PAGE_FETCH_COUNT).map((s) => fetchPageText(s.url))
-  );
-  pageTexts.forEach((text, i) => {
-    if (text) sources[i].pageText = text;
-  });
-
-  // 4. Answer, streamed. Sources first as one JSON line, then plain text.
-  const sourceBlock = sources.length
-    ? sources
-        .map(
-          (s, i) =>
-            `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.pageText ? `Content: ${s.pageText}` : `Snippet: ${s.snippet}`}`
-        )
-        .join("\n\n")
-    : "(No sources could be retrieved. Say so honestly, give only widely-known general guidance clearly labeled as unverified, and suggest where the user could look.)";
-
-  const userPrompt = `Sources retrieved from the live web just now:\n\n${sourceBlock}\n\n---\nUser's level: ${level}\nUser's question:\n${question}`;
-
-  const model = plan.model === "fast" ? modelFast : modelMain;
-
-  let upstream;
-  try {
-    upstream = await anthropic(anthropicKey, {
-      model,
-      max_tokens: 1500,
-      stream: true,
-      system: ANSWER_SYSTEM,
-      messages: [{ role: "user", content: userPrompt }],
-    });
-  } catch (err) {
-    return json({ error: "upstream_error", detail: String(err.message).slice(0, 200) }, 502);
-  }
-
-  const header =
-    JSON.stringify({
-      sources: sources.map((s, i) => ({ n: i + 1, title: s.title, url: s.url })),
-      model: plan.model,
-    }) + "\n";
-
+  // 3 + 4. Live retrieval and streamed answer, with real progress markers.
+  // Wire protocol: zero or more "#stage" lines (searching/reading/writing),
+  // then exactly one JSON line ({sources:[...]} or {error:...}), then plain text.
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  const model = plan.model === "fast" ? modelFast : modelMain;
 
   const stream = new ReadableStream({
     async start(controller) {
-      controller.enqueue(encoder.encode(header));
-      const reader = upstream.body.getReader();
-      let buf = "";
+      const say = (s) => controller.enqueue(encoder.encode(s));
       try {
+        // Search. No cached answer database, ever.
+        say("#searching\n");
+        const resultLists = await Promise.all(plan.queries.map((q) => searchWithFallback(providers, q)));
+        const seen = new Set();
+        const sources = [];
+        for (const r of resultLists.flat()) {
+          if (!r.url || seen.has(r.url)) continue;
+          seen.add(r.url);
+          sources.push(r);
+          if (sources.length >= MAX_SOURCES) break;
+        }
+
+        // Read the top pages.
+        say("#reading\n");
+        const pageTexts = await Promise.all(
+          sources.slice(0, PAGE_FETCH_COUNT).map((s) => fetchPageText(s.url))
+        );
+        pageTexts.forEach((text, i) => {
+          if (text) sources[i].pageText = text;
+        });
+
+        const sourceBlock = sources.length
+          ? sources
+              .map(
+                (s, i) =>
+                  `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.pageText ? `Content: ${s.pageText}` : `Snippet: ${s.snippet}`}`
+              )
+              .join("\n\n")
+          : "(No sources could be retrieved. Say so honestly, give only widely-known general guidance clearly labeled as unverified, and suggest where the user could look.)";
+
+        const userPrompt = `Sources retrieved from the live web just now:\n\n${sourceBlock}\n\n---\nUser's level: ${level}\nUser's question:\n${question}`;
+
+        // Answer.
+        say("#writing\n");
+        const upstream = await anthropic(anthropicKey, {
+          model,
+          max_tokens: 1500,
+          stream: true,
+          system: ANSWER_SYSTEM,
+          messages: [{ role: "user", content: userPrompt }],
+        });
+
+        say(
+          JSON.stringify({
+            sources: sources.map((s, i) => ({ n: i + 1, title: s.title, url: s.url })),
+            model: plan.model,
+          }) + "\n"
+        );
+
+        const reader = upstream.body.getReader();
+        let buf = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -315,15 +385,20 @@ export default async (req) => {
             try {
               const evt = JSON.parse(payload);
               if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta") {
-                controller.enqueue(encoder.encode(evt.delta.text));
+                say(evt.delta.text);
               }
             } catch {
               /* partial frame, skip */
             }
           }
         }
-      } catch {
-        /* client went away or upstream broke; nothing to persist, nothing to leak */
+      } catch (err) {
+        // Header not sent yet or upstream broke: emit an error header the client understands.
+        try {
+          say(JSON.stringify({ error: "upstream_error", detail: String(err?.message ?? err).slice(0, 200) }) + "\n");
+        } catch {
+          /* stream already closed */
+        }
       } finally {
         controller.close();
       }
